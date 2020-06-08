@@ -1,3 +1,4 @@
+# Modified 6/8/2020 by GY: switch status updating time interval from 24 hour to 72 hour
 # csocast: version 10.0.0
 # Modified 3/13/2020 by GY; Added automatic update of manual RG flag section in Access database file
 # Modified 11/25/2019 by GY; Converted Python 2.x code to Python 3.x code
@@ -76,7 +77,7 @@ def getLinkStatusesFromRPTs(cursor, model_dir, status_flags):
                             while current_line.strip() != '':
                                 current_timestep_has_flow = float(current_line.split()[2]) != 0
                                 if current_timestep_has_flow and last_timestep_had_flow:
-                                    status = status_flags['OVERFLOW_24HRS']
+                                    status = status_flags['OVERFLOW_72HRS']
                                     break
                                 last_timestep_had_flow = current_timestep_has_flow
                                 current_line = f.readline()
@@ -98,7 +99,7 @@ def getLinkStatusesFromRPTs(cursor, model_dir, status_flags):
     return link_statuses
 
 
-def createSWMMInputFromTemplate(template, newfilename, workingRGs, sToday, sTodayTime, sYesterday, startDate):
+def createSWMMInputFromTemplate(template, newfilename, workingRGs, sToday, sTodayTime, startDate):
     headers = ['[TITLE]', '[OPTIONS]', '[FILES]', '[EVAPORATION]', '[RAINGAGES]', '[SUBCATCHMENTS]', '[SUBAREAS]', '[HYDROGRAPHS]',
                '[RDII]', '[CURVES]']
 
@@ -158,7 +159,7 @@ def createSWMMInputFromTemplate(template, newfilename, workingRGs, sToday, sToda
                 OPTIONS.append('  '.join((row[0], sTodayTime)))
             elif row.startswith("REPORT_START_DATE"):
                 row = row.split()
-                OPTIONS.append('  '.join((row[0], sYesterday)))
+                OPTIONS.append('  '.join((row[0], startDate)))
             elif row.startswith("REPORT_START_TIME"):
                 row = row.split()
                 OPTIONS.append('  '.join((row[0], sTodayTime)))
@@ -323,17 +324,17 @@ def getMonitorRegulatorSummary(telog_cursor, reg, status_flags):
                             WITH Trunk AS (
                                 SELECT trend_data_time AS DateTime, trend_data_avg AS TRL
                                 FROM dbo.trend_data
-                                WHERE measurement_id = """ + TRUNK_ID + """ AND trend_data_time >= DATEADD(day, -1, GETDATE())
+                                WHERE measurement_id = """ + TRUNK_ID + """ AND trend_data_time >= DATEADD(day, -3, GETDATE())
                             ),
                             SWO AS (
                                 SELECT trend_data_time AS DateTime, trend_data_avg AS SWL
                                 FROM dbo.trend_data
-                                WHERE measurement_id = """ + SWO_ID + """ AND trend_data_time >= DATEADD(day, -1, GETDATE())
+                                WHERE measurement_id = """ + SWO_ID + """ AND trend_data_time >= DATEADD(day, -3, GETDATE())
                             ),
                             Gate AS (
                                 SELECT trend_data_time AS DateTime, trend_data_avg AS SWGT
                                 FROM dbo.trend_data
-                                WHERE measurement_id = """ + GATE_ID + """ AND trend_data_time >= DATEADD(day, -1, GETDATE())
+                                WHERE measurement_id = """ + GATE_ID + """ AND trend_data_time >= DATEADD(day, -3, GETDATE())
                             )
                             SELECT Trunk.DateTime,
                                    Trunk.TRL,
@@ -512,7 +513,7 @@ def getMonitorRegulatorSummary(telog_cursor, reg, status_flags):
                                     if (datetime.now() - lastoverflow).total_seconds() // secs_hour < 2:
                                         status = status_flags['OVERFLOW_CURRENT']
                                     else:
-                                        status = status_flags['OVERFLOW_24HRS']
+                                        status = status_flags['OVERFLOW_72HRS']
                                 else:
                                     status = status_flags['NO_OVERFLOW']
                                 return {'status': status, 'lastpoll': lastpoll, 'lastoverflow': lastoverflow,
@@ -642,7 +643,7 @@ def setupAndRunModels(cursor, model_dir):
 
     todaydate_str = datetime.now().strftime("%m/%d/%Y")
     todaytime_str = datetime.now().strftime("%H:00:00")
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%m/%d/%Y")
+    #yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%m/%d/%Y")
     #weekago_str = (datetime.now() - timedelta(days=8)).strftime("%m/%d/%Y")
     ThreeDaysAgo_str = (datetime.now() - timedelta(days=3)).strftime("%m/%d/%Y")
     #swmm_exe_path = os.path.join(model_dir, 'swmm5_022.exe')
@@ -654,7 +655,7 @@ def setupAndRunModels(cursor, model_dir):
         new_inp_path = os.path.join(model_dir, new_inp_fname)
 
         ok_to_run = createSWMMInputFromTemplate(inp_template_path, new_inp_path, working_gages_by_subcatchment,
-                                                todaydate_str, todaytime_str, yesterday_str, ThreeDaysAgo_str)
+                                                todaydate_str, todaytime_str, ThreeDaysAgo_str)
 
         rpt_path = os.path.join(model_dir, os.path.splitext(new_inp_fname)[0] + '.rpt')
 
@@ -682,7 +683,7 @@ def csocast(working_dir, upload=True, run_model=True, backup=True):
     status_flags = {'NOT_MONITORED': 0,
                     'NO_OVERFLOW': 1,
                     'BAD_DATA': 2,
-                    'OVERFLOW_24HRS': 3,
+                    'OVERFLOW_72HRS': 3,
                     'OVERFLOW_CURRENT': 4}
     pubmsg_fname = 'public_message.txt'
 
@@ -748,7 +749,7 @@ def csocast(working_dir, upload=True, run_model=True, backup=True):
                                    """)
     if RainFalse_Flag > 22:
         for summary in rain_summaries:
-            if summary.Volume_2day > 0.4:
+            if summary.Volume_2day > 0.5:
                 csocast_cursor.execute("""
                                        UPDATE RainGages
                                        SET Manual_Flag = True
@@ -761,7 +762,7 @@ def csocast(working_dir, upload=True, run_model=True, backup=True):
 
     csocast_cursor.execute("""
         UPDATE Regulators
-        SET LastMonitorStatus = NULL, LastPoll = NULL, LastOverFlow_24hrs = NULL, BadDataExplanation = NULL
+        SET LastMonitorStatus = NULL, LastPoll = NULL, LastOverFlow_72hrs = NULL, BadDataExplanation = NULL
     """)
     csocast_cursor.execute("""
         SELECT Name, Type, Monitored, TrunkLevelName, SWOLevelName, GatePositionName,
@@ -778,7 +779,7 @@ def csocast(working_dir, upload=True, run_model=True, backup=True):
             UPDATE Regulators
             SET LastMonitorStatus = ?,
                 LastPoll = ?,
-                LastOverFlow_24hrs = ?,
+                LastOverFlow_72hrs = ?,
                 BadDataExplanation = ?
             WHERE Name = ?
         """, (summary['status'], summary['lastpoll'], summary['lastoverflow'], summary['explanation'], reg.Name))
@@ -840,7 +841,7 @@ def csocast(working_dir, upload=True, run_model=True, backup=True):
                 hybrid_status = mon_status
             elif mon_status != status_flags['BAD_DATA']:
                 if mon_status == mod_status or (not (not (mon_status == status_flags['OVERFLOW_CURRENT']) or not (
-                            mod_status == status_flags['OVERFLOW_24HRS']))):
+                            mod_status == status_flags['OVERFLOW_72HRS']))):
                     hybrid_status = mon_status
                 else:
                     logging.warning('WARNING %s:', 'Model and monitor disagree for outfall ' + status.Outfall)
@@ -866,9 +867,9 @@ def csocast(working_dir, upload=True, run_model=True, backup=True):
         """)
         summaries = csocast_cursor.fetchall()
         status_messages = {status_flags['OVERFLOW_CURRENT']: "Currently overflowing.",
-                           status_flags['OVERFLOW_24HRS']: "Overflow in the past 24 hours.",
+                           status_flags['OVERFLOW_72HRS']: "Overflow in the past 72 hours.",
                            status_flags['BAD_DATA']: 'Data is not currently available.',
-                           status_flags['NO_OVERFLOW']: 'No overflow in the past 24 hours.',
+                           status_flags['NO_OVERFLOW']: 'No overflow in the past 72 hours.',
                            status_flags['NOT_MONITORED']: 'Data is not currently available.'}
         if not os.path.exists(output_dir):
             os.mkdir(output_dir)
